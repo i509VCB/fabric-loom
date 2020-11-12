@@ -25,7 +25,9 @@
 package net.fabricmc.loom;
 
 import java.io.IOException;
+import java.util.ArrayList;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Map;
 import java.util.Optional;
 import java.util.Set;
@@ -47,6 +49,7 @@ import org.gradle.api.publish.Publication;
 import org.gradle.api.publish.PublishingExtension;
 import org.gradle.api.publish.maven.MavenPublication;
 import org.gradle.api.tasks.SourceSet;
+import org.gradle.api.tasks.SourceSetContainer;
 import org.gradle.api.tasks.bundling.AbstractArchiveTask;
 import org.gradle.api.tasks.javadoc.Javadoc;
 import org.gradle.plugins.ide.idea.model.IdeaModel;
@@ -75,6 +78,8 @@ import net.fabricmc.loom.util.JarRemapper;
 
 public class AbstractPlugin implements Plugin<Project> {
 	protected Project project;
+	private Configuration modCompileClasspathConfig;
+	private Configuration modCompileClasspathMappedConfig;
 
 	public static boolean isRootProject(Project project) {
 		return project.getRootProject() == project;
@@ -103,17 +108,18 @@ public class AbstractPlugin implements Plugin<Project> {
 		project.apply(ImmutableMap.of("plugin", "eclipse"));
 		project.apply(ImmutableMap.of("plugin", "idea"));
 
-		project.getExtensions().create("minecraft", LoomGradleExtension.class, project);
+		final LoomGradleExtension extension = project.getExtensions().create("minecraft", LoomGradleExtension.class, project);
 		project.getExtensions().add("loom", project.getExtensions().getByName("minecraft"));
 		project.getExtensions().create("fabricApi", FabricApiExtension.class, project);
 
 		// Force add Mojang repository
 		addMavenRepo(target, "Mojang", "https://libraries.minecraft.net/");
 
-		Configuration modCompileClasspathConfig = project.getConfigurations().maybeCreate(Constants.Configurations.MOD_COMPILE_CLASSPATH);
-		modCompileClasspathConfig.setTransitive(true);
-		Configuration modCompileClasspathMappedConfig = project.getConfigurations().maybeCreate(Constants.Configurations.MOD_COMPILE_CLASSPATH_MAPPED);
-		modCompileClasspathMappedConfig.setTransitive(false);
+		this.modCompileClasspathConfig = project.getConfigurations().maybeCreate(Constants.Configurations.MOD_COMPILE_CLASSPATH);
+		this.modCompileClasspathConfig.setTransitive(true);
+
+		this.modCompileClasspathMappedConfig = project.getConfigurations().maybeCreate(Constants.Configurations.MOD_COMPILE_CLASSPATH_MAPPED);
+		this.modCompileClasspathMappedConfig.setTransitive(false);
 
 		Configuration minecraftNamedConfig = project.getConfigurations().maybeCreate(Constants.Configurations.MINECRAFT_NAMED);
 		minecraftNamedConfig.setTransitive(false); // The launchers do not recurse dependencies
@@ -128,32 +134,54 @@ public class AbstractPlugin implements Plugin<Project> {
 		project.getConfigurations().maybeCreate(Constants.Configurations.MAPPINGS);
 		project.getConfigurations().maybeCreate(Constants.Configurations.MAPPINGS_FINAL);
 
-		for (RemappedConfigurationEntry entry : Constants.MOD_COMPILE_ENTRIES) {
-			Configuration compileModsConfig = project.getConfigurations().maybeCreate(entry.getSourceConfiguration());
-			compileModsConfig.setTransitive(true);
-			Configuration compileModsMappedConfig = project.getConfigurations().maybeCreate(entry.getRemappedConfiguration());
-			compileModsMappedConfig.setTransitive(false); // Don't get transitive deps of already remapped mods
+		// Set up remapped configurations for each source set
+		// This targets all existing source sets, plus any new ones
+		// TODO: maven publication?
+		System.out.println(project.getConvention().getPlugins());
 
-			extendsFrom(entry.getTargetConfiguration(project.getConfigurations()), entry.getRemappedConfiguration());
+		SourceSetContainer sourceSets = project.getConvention().getPlugin(JavaPluginConvention.class).getSourceSets();
+		sourceSets.configureEach(set -> {
+			final List<RemappedConfigurationEntry> entries = new ArrayList<>();
 
-			if (entry.isOnModCompileClasspath()) {
-				extendsFrom(Constants.Configurations.MOD_COMPILE_CLASSPATH, entry.getSourceConfiguration());
-				extendsFrom(Constants.Configurations.MOD_COMPILE_CLASSPATH_MAPPED, entry.getRemappedConfiguration());
+			project.getLogger().warn("Dispatch: " + set.getName());
+			entries.add(new RemappedConfigurationEntry(set.getTaskName("mod", "compile"), set.getCompileConfigurationName(), true, "compile"));
+			entries.add(new RemappedConfigurationEntry(set.getTaskName("mod", "api"), set.getApiConfigurationName(), true, "compile"));
+			entries.add(new RemappedConfigurationEntry(set.getTaskName("mod", "implementation"), set.getImplementationConfigurationName(), true, "runtime"));
+			entries.add(new RemappedConfigurationEntry(set.getTaskName("mod", "runtime"), set.getRuntimeOnlyConfigurationName(), false, ""));
+			entries.add(new RemappedConfigurationEntry(set.getTaskName("mod", "compileOnly"), set.getCompileOnlyConfigurationName(), true, ""));
+
+			for (RemappedConfigurationEntry entry : entries) {
+				extension.addRemappedConfiguration(entry);
+
+				System.out.print("creating ");
+				System.out.println(entry.getSourceConfiguration());
+				Configuration compileModsConfig = project.getConfigurations().maybeCreate(entry.getSourceConfiguration());
+				compileModsConfig.setTransitive(true);
+
+				Configuration compileModsMappedConfig = project.getConfigurations().maybeCreate(entry.getRemappedConfiguration());
+				compileModsMappedConfig.setTransitive(false); // Don't get transitive deps of already remapped mods
+
+				extendsFrom(entry.getTargetConfiguration(project.getConfigurations()), entry.getRemappedConfiguration());
+
+				if (entry.isOnModCompileClasspath()) {
+					this.modCompileClasspathConfig.extendsFrom(compileModsConfig);
+					this.modCompileClasspathMappedConfig.extendsFrom(compileModsMappedConfig);
+				}
 			}
-		}
+		});
 
-		extendsFrom("compileClasspath", Constants.Configurations.MINECRAFT_NAMED);
-		extendsFrom("runtimeClasspath", Constants.Configurations.MINECRAFT_NAMED);
-		extendsFrom("testCompileClasspath", Constants.Configurations.MINECRAFT_NAMED);
-		extendsFrom("testRuntimeClasspath", Constants.Configurations.MINECRAFT_NAMED);
+		extendsFrom(JavaPlugin.COMPILE_CLASSPATH_CONFIGURATION_NAME, Constants.Configurations.MINECRAFT_NAMED);
+		extendsFrom(JavaPlugin.RUNTIME_CLASSPATH_CONFIGURATION_NAME, Constants.Configurations.MINECRAFT_NAMED);
+		extendsFrom(JavaPlugin.TEST_COMPILE_CLASSPATH_CONFIGURATION_NAME, Constants.Configurations.MINECRAFT_NAMED);
+		extendsFrom(JavaPlugin.TEST_RUNTIME_CLASSPATH_CONFIGURATION_NAME, Constants.Configurations.MINECRAFT_NAMED);
 
 		extendsFrom(Constants.Configurations.MINECRAFT_NAMED, Constants.Configurations.MINECRAFT_DEPENDENCIES);
 
-		extendsFrom("compile", Constants.Configurations.MAPPINGS_FINAL);
+		extendsFrom(JavaPlugin.COMPILE_CONFIGURATION_NAME, Constants.Configurations.MAPPINGS_FINAL);
 
 		configureIDEs();
 		configureCompile();
-		configureMaven();
+		configureMaven(extension);
 	}
 
 	public Project getProject() {
@@ -200,7 +228,7 @@ public class AbstractPlugin implements Plugin<Project> {
 		javadoc.setClasspath(main.getOutput().plus(main.getCompileClasspath()));
 
 		project.afterEvaluate(project1 -> {
-			LoomGradleExtension extension = project1.getExtensions().getByType(LoomGradleExtension.class);
+			LoomGradleExtension extension = project.getExtensions().getByType(LoomGradleExtension.class);
 
 			project1.getRepositories().flatDir(flatDirectoryArtifactRepository -> {
 				flatDirectoryArtifactRepository.dir(extension.getRootProjectBuildCache());
@@ -362,9 +390,9 @@ public class AbstractPlugin implements Plugin<Project> {
 		}
 	}
 
-	protected void configureMaven() {
+	protected void configureMaven(final LoomGradleExtension extension) {
 		project.afterEvaluate((p) -> {
-			for (RemappedConfigurationEntry entry : Constants.MOD_COMPILE_ENTRIES) {
+			for (RemappedConfigurationEntry entry : extension.getRemappedConfigurations()) {
 				if (!entry.hasMavenScope()) {
 					continue;
 				}

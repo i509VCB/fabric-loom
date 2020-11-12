@@ -56,6 +56,7 @@ import net.fabricmc.loom.providers.MappingsProvider;
 import net.fabricmc.loom.providers.MinecraftMappedProvider;
 import net.fabricmc.loom.providers.MinecraftProvider;
 import net.fabricmc.loom.util.LoomDependencyManager;
+import net.fabricmc.loom.util.RemappedConfigurationEntry;
 import net.fabricmc.loom.util.mappings.MojangMappingsDependency;
 
 public class LoomGradleExtension {
@@ -82,6 +83,8 @@ public class LoomGradleExtension {
 	private MappingSet[] srcMappingCache = new MappingSet[2];
 	private Mercury[] srcMercuryCache = new Mercury[2];
 	private Set<File> mixinMappings = Collections.synchronizedSet(new HashSet<>());
+
+	private final List<RemappedConfigurationEntry> remappedConfigurations = new ArrayList<>();
 
 	/**
 	 * Loom will generate a new genSources task (with a new name, based off of {@link LoomDecompiler#name()})
@@ -414,5 +417,18 @@ public class LoomGradleExtension {
 
 	public Set<File> getAllMixinMappings() {
 		return Collections.unmodifiableSet(mixinMappings);
+	}
+
+	/**
+	 * Get an unmodifiable list of remapped configurations.
+	 *
+	 * @return configurations to remap
+	 */
+	public List<RemappedConfigurationEntry> getRemappedConfigurations() {
+		return Collections.unmodifiableList(this.remappedConfigurations);
+	}
+
+	void addRemappedConfiguration(RemappedConfigurationEntry entry) {
+		this.remappedConfigurations.add(entry);
 	}
 }

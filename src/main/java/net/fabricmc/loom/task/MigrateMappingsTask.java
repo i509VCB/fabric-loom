@@ -101,7 +101,7 @@ public class MigrateMappingsTask extends AbstractLoomTask {
 		try {
 			TinyTree currentMappings = mappingsProvider.getMappings();
 			TinyTree targetMappings = getMappings(mappings);
-			migrateMappings(project, extension.getMinecraftMappedProvider(), inputDir, outputDir, currentMappings, targetMappings);
+			migrateMappings(project, extension, inputDir, outputDir, currentMappings, targetMappings);
 			project.getLogger().lifecycle(":remapped project written to " + outputDir.toAbsolutePath());
 		} catch (IOException e) {
 			throw new IllegalArgumentException("Error while loading mappings", e);
@@ -158,7 +158,7 @@ public class MigrateMappingsTask extends AbstractLoomTask {
 		}
 	}
 
-	private static void migrateMappings(Project project, MinecraftMappedProvider minecraftMappedProvider,
+	private static void migrateMappings(Project project, LoomGradleExtension extension,
 										Path inputDir, Path outputDir, TinyTree currentMappings, TinyTree targetMappings
 	) throws IOException {
 		project.getLogger().lifecycle(":joining mappings");
@@ -170,7 +170,7 @@ public class MigrateMappingsTask extends AbstractLoomTask {
 		).read();
 
 		project.getLogger().lifecycle(":remapping");
-		Mercury mercury = SourceRemapper.createMercuryWithClassPath(project, false);
+		Mercury mercury = SourceRemapper.createMercuryWithClassPath(project, extension, false);
 
 		final JavaPluginConvention convention = project.getConvention().findPlugin(JavaPluginConvention.class);
 		final JavaVersion javaVersion = convention != null
@@ -180,8 +180,9 @@ public class MigrateMappingsTask extends AbstractLoomTask {
 				JavaVersion.current();
 		mercury.setSourceCompatibility(javaVersion.toString());
 
-		mercury.getClassPath().add(minecraftMappedProvider.getMappedJar().toPath());
-		mercury.getClassPath().add(minecraftMappedProvider.getIntermediaryJar().toPath());
+		final MinecraftMappedProvider minecraftMapped = extension.getMinecraftMappedProvider();
+		mercury.getClassPath().add(minecraftMapped.getMappedJar().toPath());
+		mercury.getClassPath().add(minecraftMapped.getIntermediaryJar().toPath());
 
 		mercury.getProcessors().add(MercuryRemapper.create(mappingSet));
 

@@ -57,7 +57,8 @@ public class ModCompileRemapper {
 		final File modStore = extension.getRemappedModCache();
 		final RemapData remapData = new RemapData(mappingsSuffix, modStore);
 
-		for (RemappedConfigurationEntry entry : Constants.MOD_COMPILE_ENTRIES) {
+		for (RemappedConfigurationEntry entry : extension.getRemappedConfigurations()) {
+			System.out.println(entry.getSourceConfiguration());
 			Configuration sourceConfig = project.getConfigurations().getByName(entry.getSourceConfiguration());
 			Configuration remappedConfig = project.getConfigurations().getByName(entry.getRemappedConfiguration());
 			Configuration regularConfig = project.getConfigurations().getByName(entry.getTargetConfiguration(project.getConfigurations()));
